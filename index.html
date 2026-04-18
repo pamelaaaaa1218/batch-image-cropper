@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>批量图片剪裁工具</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f1115;
+    color: #e6e9ef;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 260px 1fr 300px;
+    grid-template-rows: 52px 1fr 56px;
+    height: 100vh;
+  }
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    background: #161922;
+    border-bottom: 1px solid #262a36;
+    gap: 14px;
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.5px; }
+  header .hint { font-size: 12px; color: #7a8194; margin-left: auto; }
+
+  /* 左侧列表 */
+  .sidebar {
+    background: #13161e;
+    border-right: 1px solid #262a36;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .drop-zone {
+    margin: 12px;
+    padding: 18px 10px;
+    border: 1.5px dashed #3a4154;
+    border-radius: 8px;
+    text-align: center;
+    cursor: pointer;
+    color: #8b92a6;
+    font-size: 12px;
+    transition: all 0.15s;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: #5b8cff;
+    background: #1a2238;
+    color: #a8b8e0;
+  }
+  .file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px 12px;
+  }
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 3px;
+    font-size: 12px;
+  }
+  .file-item:hover { background: #1b1f2a; }
+  .file-item.active { background: #253055; color: #c5d4ff; }
+  .file-item img {
+    width: 36px; height: 36px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #222;
+    flex-shrink: 0;
+  }
+  .file-item .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-item .remove {
+    color: #666;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .file-item .remove:hover { color: #ff7676; background: #2b1f23; }
+
+  /* 右侧后缀列表 */
+  .suffix-list {
+    max-height: 280px;
+    overflow-y: auto;
+    background: #0f1218;
+    border-radius: 6px;
+    padding: 4px;
+    margin-top: 6px;
+  }
+  .suffix-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .suffix-row:hover { background: #1b1f2a; }
+  .suffix-row.active { background: #253055; }
+  .suffix-row .snum {
+    color: #6a7081;
+    font-size: 11px;
+    min-width: 18px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .suffix-row .sname {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: #8b92a6;
+  }
+  .suffix-row.active .sname { color: #c5d4ff; }
+  .suffix-row .sinput {
+    width: 90px;
+    background: #0b0d12;
+    border: 1px solid #262a36;
+    color: #e6e9ef;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    outline: none;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+  .suffix-row .sinput:focus { border-color: #5b8cff; }
+  .suffix-row .sinput::placeholder { color: #555b6b; }
+
+  /* 中间画布 */
+  .canvas-area {
+    background: #0b0d12;
+    overflow: auto;
+    position: relative;
+  }
+  .canvas-inner {
+    min-width: 100%;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .canvas-wrapper {
+    position: relative;
+    flex-shrink: 0;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .canvas-wrapper img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .zoom-controls {
+    position: fixed;
+    bottom: 72px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(22,25,34,0.92);
+    backdrop-filter: blur(8px);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid #262a36;
+    z-index: 10;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .zoom-controls button {
+    background: transparent;
+    border: none;
+    color: #c5d4ff;
+    width: 30px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .zoom-controls button:hover { background: #2a3450; }
+  .zoom-controls .zoom-val {
+    font-size: 12px;
+    color: #a0a8bc;
+    padding: 0 8px;
+    min-width: 48px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .zoom-controls .divider {
+    width: 1px;
+    height: 16px;
+    background: #2a3450;
+    margin: 0 2px;
+  }
+  .crop-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+  }
+  .crop-mask {
+    position: absolute;
+    background: rgba(0,0,0,0.55);
+  }
+  .crop-box {
+    position: absolute;
+    border: 1.5px solid #5b8cff;
+    box-shadow: 0 0 0 1px rgba(91,140,255,0.3);
+    cursor: move;
+    pointer-events: auto;
+  }
+  .crop-box::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.2) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.2) 1px, transparent 1px);
+    background-size: 33.33% 33.33%;
+    pointer-events: none;
+  }
+  .handle {
+    position: absolute;
+    width: 10px; height: 10px;
+    background: #fff;
+    border: 1.5px solid #5b8cff;
+    border-radius: 50%;
+    pointer-events: auto;
+  }
+  .handle.nw { top: -5px; left: -5px; cursor: nwse-resize; }
+  .handle.ne { top: -5px; right: -5px; cursor: nesw-resize; }
+  .handle.sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+  .handle.se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+  .handle.n  { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+  .handle.s  { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+  .handle.w  { top: 50%; left: -5px; transform: translateY(-50%); cursor: ew-resize; }
+  .handle.e  { top: 50%; right: -5px; transform: translateY(-50%); cursor: ew-resize; }
+
+  .empty-state {
+    color: #4a5066;
+    text-align: center;
+    font-size: 14px;
+  }
+  .empty-state .big { font-size: 40px; margin-bottom: 12px; opacity: 0.6; }
+
+  /* 右侧设置 */
+  .settings {
+    background: #13161e;
+    border-left: 1px solid #262a36;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .settings h3 {
+    font-size: 11px;
+    font-weight: 600;
+    color: #7a8194;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+    margin-top: 18px;
+  }
+  .settings h3:first-child { margin-top: 0; }
+  .mode-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px;
+    background: #0f1218;
+    padding: 3px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+  }
+  .mode-tabs button {
+    background: transparent;
+    border: none;
+    padding: 7px 4px;
+    border-radius: 4px;
+    color: #8b92a6;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-tabs button.active {
+    background: #2a3450;
+    color: #c5d4ff;
+  }
+  .row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .row label {
+    font-size: 12px;
+    color: #8b92a6;
+    min-width: 52px;
+  }
+  input[type="number"], input[type="text"], select {
+    flex: 1;
+    background: #0f1218;
+    border: 1px solid #262a36;
+    color: #e6e9ef;
+    padding: 7px 9px;
+    border-radius: 5px;
+    font-size: 12px;
+    outline: none;
+    width: 100%;
+  }
+  input[type="number"]:focus, select:focus {
+    border-color: #5b8cff;
+  }
+  .ratio-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .ratio-grid button {
+    background: #1b1f2a;
+    border: 1px solid transparent;
+    color: #a0a8bc;
+    padding: 7px 0;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .ratio-grid button.active {
+    background: #253055;
+    border-color: #5b8cff;
+    color: #c5d4ff;
+  }
+  .ratio-grid button:hover { background: #232836; }
+  .range-row { display: flex; gap: 8px; align-items: center; }
+  .range-row input[type="range"] { flex: 1; }
+  .range-row .val { font-size: 12px; color: #a0a8bc; min-width: 36px; text-align: right; }
+
+  /* 底部 */
+  footer {
+    grid-column: 1 / -1;
+    background: #161922;
+    border-top: 1px solid #262a36;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .btn {
+    background: #2a3450;
+    border: none;
+    color: #c5d4ff;
+    padding: 9px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: #354067; }
+  .btn-primary { background: #5b8cff; color: #fff; }
+  .btn-primary:hover { background: #6d9aff; }
+  .btn-primary:disabled { background: #2a2f3d; color: #555; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: #8b92a6; }
+  .btn-ghost:hover { background: #1b1f2a; color: #c5d4ff; }
+
+  .status { font-size: 12px; color: #7a8194; margin-left: auto; }
+  .progress {
+    height: 3px;
+    background: #1b1f2a;
+    border-radius: 2px;
+    overflow: hidden;
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    display: none;
+  }
+  .progress.active { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: #5b8cff;
+    width: 0%;
+    transition: width 0.2s;
+  }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #262a36; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4154; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🖼️ 批量图片剪裁工具</h1>
+    <span class="hint">纯本地处理，图片不会上传到任何服务器</span>
+  </header>
+
+  <aside class="sidebar">
+    <div class="drop-zone" id="dropZone">
+      <div>📁 点击或拖拽图片到此</div>
+      <div style="margin-top:4px; font-size:11px; opacity:0.7;">支持 JPG / PNG / WebP，可多选</div>
+      <input type="file" id="fileInput" multiple accept="image/*" style="display:none" />
+    </div>
+    <div class="file-list" id="fileList"></div>
+  </aside>
+
+  <main class="canvas-area" id="canvasArea">
+    <div class="canvas-inner" id="canvasInner">
+      <div class="empty-state" id="emptyState">
+        <div class="big">🖼️</div>
+        <div>请先在左侧上传图片</div>
+      </div>
+      <div class="canvas-wrapper" id="canvasWrapper" style="display:none">
+        <img id="previewImg" />
+        <div class="crop-overlay">
+          <div class="crop-mask" id="maskTop"></div>
+          <div class="crop-mask" id="maskBottom"></div>
+          <div class="crop-mask" id="maskLeft"></div>
+          <div class="crop-mask" id="maskRight"></div>
+          <div class="crop-box" id="cropBox">
+            <div class="handle nw"></div><div class="handle ne"></div>
+            <div class="handle sw"></div><div class="handle se"></div>
+            <div class="handle n"></div><div class="handle s"></div>
+            <div class="handle w"></div><div class="handle e"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="zoom-controls" id="zoomControls" style="display:none">
+      <button id="zoomOut" title="缩小 (Ctrl/⌘ -)">−</button>
+      <span class="zoom-val" id="zoomVal" title="点击重置">100%</span>
+      <button id="zoomIn" title="放大 (Ctrl/⌘ +)">+</button>
+      <div class="divider"></div>
+      <button id="zoomFit" title="适应屏幕 (F)">⛶</button>
+      <button id="zoom100" title="实际大小 (Ctrl/⌘ 0)">1:1</button>
+    </div>
+  </main>
+
+  <aside class="settings">
+    <h3>剪裁模式</h3>
+    <div class="mode-tabs">
+      <button data-mode="ratio" class="active">比例</button>
+      <button data-mode="pixel">像素</button>
+      <button data-mode="free">自由</button>
+    </div>
+
+    <div id="panelRatio">
+      <h3>常用比例</h3>
+      <div class="ratio-grid" id="ratioGrid">
+        <button data-r="1:1">1:1</button>
+        <button data-r="4:3">4:3</button>
+        <button data-r="3:4">3:4</button>
+        <button data-r="16:9">16:9</button>
+        <button data-r="9:16">9:16</button>
+        <button data-r="3:2">3:2</button>
+        <button data-r="2:3">2:3</button>
+        <button data-r="custom" class="active">自定义</button>
+      </div>
+      <div class="row">
+        <label>宽</label>
+        <input type="number" id="ratioW" value="1" min="1" />
+        <label style="min-width:12px; text-align:center;">:</label>
+        <input type="number" id="ratioH" value="1" min="1" />
+      </div>
+    </div>
+
+    <div id="panelPixel" style="display:none">
+      <div class="row">
+        <label>宽(px)</label>
+        <input type="number" id="pixelW" value="800" min="1" />
+      </div>
+      <div class="row">
+        <label>高(px)</label>
+        <input type="number" id="pixelH" value="800" min="1" />
+      </div>
+      <div style="font-size:11px; color:#7a8194; line-height:1.5; margin-top:4px;">
+        将在每张图中央截取该尺寸；<br/>若原图过小会自动缩放适配。
+      </div>
+    </div>
+
+    <div id="panelFree" style="display:none">
+      <div style="font-size:12px; color:#a0a8bc; line-height:1.6;">
+        自由剪裁模式：<br/>
+        在画布中任意拖动调整裁剪框，<br/>
+        每张图可独立设置。
+      </div>
+    </div>
+
+    <h3>批量操作</h3>
+    <button class="btn" id="syncCropBtn" style="width:100%; margin-bottom:6px; font-size:12px;">
+      ⎘ 把当前设置同步到所有图
+    </button>
+    <div style="font-size:11px; color:#7a8194; line-height:1.5;">
+      每张图的模式、比例、像素、裁剪都独立；<br/>点此按钮把<b>当前图</b>的全部设置复制到其它所有图。
+    </div>
+
+    <h3>输出设置</h3>
+    <div class="row">
+      <label>格式</label>
+      <select id="outFormat">
+        <option value="image/jpeg">JPG</option>
+        <option value="image/png">PNG</option>
+        <option value="image/webp">WebP</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>质量</label>
+      <div class="range-row" style="flex:1">
+        <input type="range" id="outQuality" min="0.1" max="1" step="0.05" value="0.92" />
+        <span class="val" id="qualityVal">92%</span>
+      </div>
+    </div>
+    <h3>输出命名</h3>
+    <div class="row">
+      <label>模板</label>
+      <input type="text" id="nameTemplate" value="pic" placeholder="所有图共用的文字" />
+    </div>
+    <div style="font-size:11px; color:#7a8194; line-height:1.5; margin-top:2px;">
+      最终文件名 = <span style="color:#c5d4ff;">模板</span> + <span style="color:#8fffa8;">后缀</span> + 扩展名
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-top:14px;">
+      <h3 style="margin:0;">每张图后缀</h3>
+      <button id="autoSuffixBtn" style="background:transparent; border:1px solid #2a3450; color:#8b92a6; font-size:10px; padding:3px 8px; border-radius:4px; cursor:pointer;" title="用序号 01/02/… 批量填充">自动编号</button>
+    </div>
+    <div class="suffix-list" id="suffixList"></div>
+
+    <div style="font-size:11px; color:#7a8194; margin-top:8px; padding:8px 10px; background:#0f1218; border-radius:5px;">
+      预览：<span style="color:#c5d4ff;" id="namePreview">-</span>
+      <br/>
+      <span style="color:#7a8194;">若后缀重复，会自动加 _1 _2 防覆盖。</span>
+    </div>
+  </aside>
+
+  <footer>
+    <button class="btn btn-ghost" id="clearBtn">清空</button>
+    <span class="status" id="status">未导入图片</span>
+    <button class="btn" id="downloadOneBtn" disabled>下载当前</button>
+    <button class="btn btn-primary" id="downloadAllBtn" disabled>📦 批量下载 ZIP</button>
+    <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const state = {
+    // 每个 file 自带:
+    //   mode: 'ratio' | 'pixel' | 'free'
+    //   ratio: number(w/h) | null
+    //   ratioLabel: '1:1' | '16:9' | 'custom' 用于回显比例按钮高亮
+    //   pixelW, pixelH
+    //   cropPct: { x,y,w,h } | null
+    //   suffix: string
+    files: [],
+    currentId: null,
+    // 新导入图片时的默认模式/比例/像素（= 用户最后一次用的那组）
+    defaults: {
+      mode: 'ratio',
+      ratio: 1,
+      ratioLabel: '1:1',
+      pixelW: 800,
+      pixelH: 800,
+    },
+    format: 'image/jpeg',
+    quality: 0.92,
+    template: 'pic',
+    zoom: 1,
+    fitScale: 1,
+  };
+
+  // 读写当前图片的快捷器
+  const curMode     = () => getCurrentFile()?.mode     ?? state.defaults.mode;
+  const curRatio    = () => getCurrentFile()?.ratio    ?? state.defaults.ratio;
+  const curPixelW   = () => getCurrentFile()?.pixelW   ?? state.defaults.pixelW;
+  const curPixelH   = () => getCurrentFile()?.pixelH   ?? state.defaults.pixelH;
+
+  const $ = id => document.getElementById(id);
+  const fileInput = $('fileInput');
+  const dropZone = $('dropZone');
+  const fileListEl = $('fileList');
+  const emptyState = $('emptyState');
+  const canvasArea = $('canvasArea');
+  const canvasWrapper = $('canvasWrapper');
+  const previewImg = $('previewImg');
+  const cropBox = $('cropBox');
+  const statusEl = $('status');
+  const zoomControls = $('zoomControls');
+
+  // ---------- 文件导入 ----------
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+  ['dragenter', 'dragover'].forEach(ev =>
+    dropZone.addEventListener(ev, e => {
+      e.preventDefault(); dropZone.classList.add('dragover');
+    }));
+  ['dragleave', 'drop'].forEach(ev =>
+    dropZone.addEventListener(ev, e => {
+      e.preventDefault(); dropZone.classList.remove('dragover');
+    }));
+  dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+
+  // 整个窗口拖拽
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    if (e.target.closest('.drop-zone')) return; // already handled
+    handleFiles(e.dataTransfer.files);
+  });
+
+  async function handleFiles(fileList) {
+    const imgs = [...fileList].filter(f => f.type.startsWith('image/'));
+    for (const file of imgs) {
+      const id = crypto.randomUUID();
+      const url = URL.createObjectURL(file);
+      const img = await loadImage(url);
+      state.files.push({
+        id, file, name: file.name, url, img,
+        cropPct: null,
+        suffix: String(state.files.length + 1).padStart(2, '0'),
+        // 每张图独立的剪裁配置，初始 = 最近一次使用的默认值
+        mode:       state.defaults.mode,
+        ratio:      state.defaults.ratio,
+        ratioLabel: state.defaults.ratioLabel,
+        pixelW:     state.defaults.pixelW,
+        pixelH:     state.defaults.pixelH,
+      });
+    }
+    if (!state.currentId && state.files.length) {
+      state.currentId = state.files[0].id;
+    }
+    renderFileList();
+    renderSuffixList();
+    syncUIFromCurrent();
+    renderPreview();
+    updateStatus();
+  }
+
+  function loadImage(url) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = url;
+    });
+  }
+
+  function renderFileList() {
+    fileListEl.innerHTML = '';
+    state.files.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'file-item' + (f.id === state.currentId ? ' active' : '');
+      el.innerHTML = `
+        <img src="${f.url}" />
+        <span class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+        <span class="remove" title="移除">✕</span>
+      `;
+      el.addEventListener('click', e => {
+        if (e.target.classList.contains('remove')) {
+          removeFile(f.id);
+        } else {
+          state.currentId = f.id;
+          renderFileList();
+          renderSuffixList();
+          syncUIFromCurrent();
+          renderPreview();
+        }
+      });
+      fileListEl.appendChild(el);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  // 右侧：每张图后缀列表
+  function renderSuffixList() {
+    const list = $('suffixList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!state.files.length) {
+      list.innerHTML = '<div style="padding:14px; text-align:center; color:#555b6b; font-size:11px;">还没有图片</div>';
+      return;
+    }
+    state.files.forEach((f, i) => {
+      const row = document.createElement('div');
+      row.className = 'suffix-row' + (f.id === state.currentId ? ' active' : '');
+      row.dataset.id = f.id;
+      row.innerHTML = `
+        <span class="snum">${i + 1}</span>
+        <span class="sname" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+        <input class="sinput" type="text" value="${escapeHtml(f.suffix || '')}" placeholder="后缀" />
+      `;
+      // 点击行切换当前图（但不包括输入框）
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('sinput')) return;
+        state.currentId = f.id;
+        renderFileList();
+        renderSuffixList();
+        syncUIFromCurrent();
+        renderPreview();
+      });
+      const input = row.querySelector('.sinput');
+      input.addEventListener('click', e => {
+        e.stopPropagation();
+        if (f.id !== state.currentId) {
+          state.currentId = f.id;
+          // 不重渲以保留焦点：手动切高亮
+          fileListEl.querySelectorAll('.file-item').forEach((n, idx) => {
+            n.classList.toggle('active', state.files[idx].id === f.id);
+          });
+          list.querySelectorAll('.suffix-row').forEach(n => n.classList.remove('active'));
+          row.classList.add('active');
+          syncUIFromCurrent();
+          renderPreview();
+        }
+      });
+      input.addEventListener('input', e => {
+        f.suffix = e.target.value;
+        updateNamePreview();
+      });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') e.target.blur();
+      });
+      list.appendChild(row);
+    });
+  }
+
+  function removeFile(id) {
+    const idx = state.files.findIndex(f => f.id === id);
+    if (idx < 0) return;
+    URL.revokeObjectURL(state.files[idx].url);
+    state.files.splice(idx, 1);
+    if (state.currentId === id) {
+      state.currentId = state.files[0]?.id || null;
+    }
+    renderFileList();
+    renderSuffixList();
+    syncUIFromCurrent();
+    renderPreview();
+    updateStatus();
+  }
+
+  $('clearBtn').addEventListener('click', () => {
+    state.files.forEach(f => URL.revokeObjectURL(f.url));
+    state.files = [];
+    state.currentId = null;
+    renderFileList();
+    renderSuffixList();
+    renderPreview();
+    updateStatus();
+  });
+
+  // ---------- 模式切换（只改当前图）----------
+  document.querySelectorAll('.mode-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      state.defaults.mode = mode;
+      const f = getCurrentFile();
+      if (f) {
+        f.mode = mode;
+        f.cropPct = null;   // 只重置当前这张
+      }
+      syncUIFromCurrent();
+      initCropForCurrent();
+      renderPreview();
+    });
+  });
+
+  // ---------- 比例预设（只改当前图）----------
+  document.querySelectorAll('#ratioGrid button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = btn.dataset.r;
+      const f = getCurrentFile();
+      let ratio, w = 1, h = 1;
+      if (r === 'custom') {
+        w = +$('ratioW').value || 1;
+        h = +$('ratioH').value || 1;
+        ratio = w / h;
+      } else {
+        [w, h] = r.split(':').map(Number);
+        ratio = w / h;
+      }
+      state.defaults.ratio = ratio;
+      state.defaults.ratioLabel = r;
+      if (f) {
+        f.ratio = ratio;
+        f.ratioLabel = r;
+        f.cropPct = null;
+      }
+      if (r !== 'custom') {
+        $('ratioW').value = w;
+        $('ratioH').value = h;
+      }
+      syncUIFromCurrent();
+      initCropForCurrent();
+      renderPreview();
+    });
+  });
+  function onCustomRatioInput() {
+    const w = +$('ratioW').value || 1;
+    const h = +$('ratioH').value || 1;
+    const ratio = w / h;
+    state.defaults.ratio = ratio;
+    state.defaults.ratioLabel = 'custom';
+    const f = getCurrentFile();
+    if (f) {
+      f.ratio = ratio;
+      f.ratioLabel = 'custom';
+      f.cropPct = null;
+    }
+    // 高亮"自定义"
+    document.querySelectorAll('#ratioGrid button').forEach(b =>
+      b.classList.toggle('active', b.dataset.r === 'custom'));
+    initCropForCurrent();
+    renderPreview();
+  }
+  $('ratioW').addEventListener('input', onCustomRatioInput);
+  $('ratioH').addEventListener('input', onCustomRatioInput);
+
+  // ---------- 像素（只改当前图）----------
+  $('pixelW').addEventListener('input', e => {
+    const v = +e.target.value || 1;
+    state.defaults.pixelW = v;
+    const f = getCurrentFile();
+    if (f) { f.pixelW = v; f.cropPct = null; }
+    initCropForCurrent();
+    renderPreview();
+  });
+  $('pixelH').addEventListener('input', e => {
+    const v = +e.target.value || 1;
+    state.defaults.pixelH = v;
+    const f = getCurrentFile();
+    if (f) { f.pixelH = v; f.cropPct = null; }
+    initCropForCurrent();
+    renderPreview();
+  });
+
+  // 根据当前图的设置，刷新右侧面板 UI（切图时调用）
+  function syncUIFromCurrent() {
+    const mode  = curMode();
+    const label = getCurrentFile()?.ratioLabel ?? state.defaults.ratioLabel;
+    const pW    = curPixelW();
+    const pH    = curPixelH();
+
+    document.querySelectorAll('.mode-tabs button').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === mode));
+    $('panelRatio').style.display = mode === 'ratio' ? '' : 'none';
+    $('panelPixel').style.display = mode === 'pixel' ? '' : 'none';
+    $('panelFree').style.display  = mode === 'free'  ? '' : 'none';
+
+    document.querySelectorAll('#ratioGrid button').forEach(b =>
+      b.classList.toggle('active', b.dataset.r === label));
+    if (label && label !== 'custom') {
+      const [w, h] = label.split(':').map(Number);
+      $('ratioW').value = w;
+      $('ratioH').value = h;
+    }
+
+    $('pixelW').value = pW;
+    $('pixelH').value = pH;
+  }
+
+  // 初始化（无当前图时，同步默认值到 UI）
+  syncUIFromCurrent();
+  renderSuffixList();
+
+  // ---------- 其他设置 ----------
+  $('syncCropBtn').addEventListener('click', () => {
+    const cur = getCurrentFile();
+    if (!cur || !cur.cropPct) return;
+    if (state.files.length < 2) return;
+    // 完整同步：模式 + 比例 + 像素 + 裁剪区域
+    state.files.forEach(f => {
+      if (f.id === cur.id) return;
+      f.mode       = cur.mode;
+      f.ratio      = cur.ratio;
+      f.ratioLabel = cur.ratioLabel;
+      f.pixelW     = cur.pixelW;
+      f.pixelH     = cur.pixelH;
+      f.cropPct    = { ...cur.cropPct };
+    });
+    flashStatus(`已同步模式、比例、裁剪到 ${state.files.length} 张图`);
+  });
+  function flashStatus(msg) {
+    const prev = statusEl.textContent;
+    statusEl.textContent = msg;
+    statusEl.style.color = '#8fffa8';
+    setTimeout(() => { statusEl.style.color = ''; updateStatus(); }, 1800);
+  }
+  $('outFormat').addEventListener('change', e => {
+    state.format = e.target.value;
+    updateNamePreview();
+  });
+  $('outQuality').addEventListener('input', e => {
+    state.quality = +e.target.value;
+    $('qualityVal').textContent = Math.round(state.quality * 100) + '%';
+  });
+  $('nameTemplate').addEventListener('input', e => {
+    state.template = e.target.value;
+    updateNamePreview();
+  });
+  $('autoSuffixBtn').addEventListener('click', () => {
+    const padLen = String(Math.max(state.files.length, 2)).length;
+    state.files.forEach((f, i) => {
+      f.suffix = String(i + 1).padStart(padLen, '0');
+    });
+    renderSuffixList();
+    updateNamePreview();
+    flashStatus('已重置为 01 02 …');
+  });
+  function updateNamePreview() {
+    const preview = $('namePreview');
+    if (!state.files.length) { preview.textContent = '-'; return; }
+    const names = computeAllNames();
+    preview.textContent = names.length > 1
+      ? `${names[0]}、${names[1]}${names.length > 2 ? ' …' : ''}`
+      : names[0];
+  }
+  // 生成所有输出文件名：模板 + 后缀 + 扩展名（重名自动补 _1 _2）
+  function computeAllNames() {
+    const ext = extForFormat();
+    const tpl = state.template || '';
+    const used = new Set();
+    return state.files.map((f, i) => {
+      const suf = f.suffix || '';
+      let base = (tpl + suf).trim();
+      if (!base) base = `image_${String(i+1).padStart(2,'0')}`;
+      let full = `${base}.${ext}`;
+      let k = 1;
+      while (used.has(full)) {
+        full = `${base}_${k}.${ext}`;
+        k++;
+      }
+      used.add(full);
+      return full;
+    });
+  }
+  function extForFormat() {
+    return state.format === 'image/jpeg' ? 'jpg'
+         : state.format === 'image/png'  ? 'png' : 'webp';
+  }
+
+  // ---------- 预览 + 裁剪框 ----------
+  function getCurrentFile() {
+    return state.files.find(f => f.id === state.currentId);
+  }
+
+  // 初始化裁剪框（当前图）
+  function initCropForCurrent() {
+    const f = getCurrentFile();
+    if (!f) return;
+    const iw = f.img.naturalWidth;
+    const ih = f.img.naturalHeight;
+
+    // 读当前这张的 mode / ratio / pixel
+    const mode = f.mode, ratio = f.ratio, pW = f.pixelW, pH = f.pixelH;
+
+    if (mode === 'ratio' && ratio) {
+      let cw, ch;
+      if (iw / ih > ratio) { ch = ih; cw = ih * ratio; }
+      else                 { cw = iw; ch = iw / ratio; }
+      f.cropPct = {
+        x: (iw - cw) / 2 / iw, y: (ih - ch) / 2 / ih,
+        w: cw / iw,            h: ch / ih,
+      };
+    } else if (mode === 'pixel') {
+      const cw = Math.min(pW, iw);
+      const ch = Math.min(pH, ih);
+      f.cropPct = {
+        x: (iw - cw) / 2 / iw, y: (ih - ch) / 2 / ih,
+        w: cw / iw,            h: ch / ih,
+      };
+    } else {
+      // free
+      if (!f.cropPct) f.cropPct = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+    }
+  }
+
+  function getActivePct(f) {
+    return f.cropPct || { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+  }
+
+  function renderPreview() {
+    const f = getCurrentFile();
+    if (!f) {
+      emptyState.style.display = '';
+      canvasWrapper.style.display = 'none';
+      zoomControls.style.display = 'none';
+      return;
+    }
+    emptyState.style.display = 'none';
+    canvasWrapper.style.display = '';
+    zoomControls.style.display = '';
+    if (previewImg.src !== f.url) previewImg.src = f.url;
+
+    if (!f.cropPct) initCropForCurrent();
+
+    requestAnimationFrame(() => {
+      applyZoom();
+    });
+    updateNamePreview();
+  }
+
+  // 计算"适应屏幕"时的缩放比
+  function computeFitScale(iw, ih) {
+    const rect = canvasArea.getBoundingClientRect();
+    const maxW = Math.max(50, rect.width - 48);
+    const maxH = Math.max(50, rect.height - 48);
+    return Math.min(maxW / iw, maxH / ih, 1);
+  }
+
+  // 根据 state.zoom 设置 canvasWrapper 的实际像素尺寸
+  function applyZoom() {
+    const f = getCurrentFile();
+    if (!f) return;
+    const iw = f.img.naturalWidth;
+    const ih = f.img.naturalHeight;
+    state.fitScale = computeFitScale(iw, ih);
+    const scale = state.fitScale * state.zoom;
+    canvasWrapper.style.width = Math.round(iw * scale) + 'px';
+    canvasWrapper.style.height = Math.round(ih * scale) + 'px';
+    // 更新显示值：以 100% 表示原图实际像素
+    $('zoomVal').textContent = Math.round(scale * 100) + '%';
+    positionCropBox();
+  }
+
+  function setZoom(newZoom, pivot) {
+    // pivot: { clientX, clientY } — 以鼠标为缩放中心
+    const f = getCurrentFile();
+    if (!f) return;
+
+    // 记录鼠标所指的图像点在图像内的归一化坐标
+    let imgU = 0.5, imgV = 0.5, areaX = 0, areaY = 0;
+    if (pivot) {
+      const wrapRect = canvasWrapper.getBoundingClientRect();
+      const areaRect = canvasArea.getBoundingClientRect();
+      imgU = (pivot.clientX - wrapRect.left) / Math.max(1, wrapRect.width);
+      imgV = (pivot.clientY - wrapRect.top)  / Math.max(1, wrapRect.height);
+      areaX = pivot.clientX - areaRect.left;
+      areaY = pivot.clientY - areaRect.top;
+    }
+
+    state.zoom = Math.max(0.05, Math.min(20, newZoom));
+    applyZoom();
+
+    if (pivot) {
+      // 让同一图像点在新尺寸下仍位于鼠标下方
+      const newWrap = canvasWrapper.getBoundingClientRect();
+      const newArea = canvasArea.getBoundingClientRect();
+      const pointScreenX = newWrap.left + imgU * newWrap.width;
+      const pointScreenY = newWrap.top  + imgV * newWrap.height;
+      canvasArea.scrollLeft += (pointScreenX - (newArea.left + areaX));
+      canvasArea.scrollTop  += (pointScreenY - (newArea.top  + areaY));
+    }
+  }
+
+  function positionCropBox() {
+    const f = getCurrentFile();
+    if (!f) return;
+    const pct = getActivePct(f);
+    const rect = previewImg.getBoundingClientRect();
+    const wrapRect = canvasWrapper.getBoundingClientRect();
+    const displayW = previewImg.clientWidth;
+    const displayH = previewImg.clientHeight;
+
+    const x = pct.x * displayW;
+    const y = pct.y * displayH;
+    const w = pct.w * displayW;
+    const h = pct.h * displayH;
+
+    cropBox.style.left = x + 'px';
+    cropBox.style.top = y + 'px';
+    cropBox.style.width = w + 'px';
+    cropBox.style.height = h + 'px';
+
+    // masks
+    $('maskTop').style.cssText = `left:0;top:0;width:100%;height:${y}px`;
+    $('maskBottom').style.cssText = `left:0;top:${y+h}px;width:100%;height:${displayH-y-h}px`;
+    $('maskLeft').style.cssText = `left:0;top:${y}px;width:${x}px;height:${h}px`;
+    $('maskRight').style.cssText = `left:${x+w}px;top:${y}px;width:${displayW-x-w}px;height:${h}px`;
+  }
+
+  // 拖拽 / resize 裁剪框
+  let drag = null;
+  cropBox.addEventListener('mousedown', e => {
+    const handle = e.target.closest('.handle');
+    const f = getCurrentFile();
+    if (!f) return;
+    const displayW = previewImg.clientWidth;
+    const displayH = previewImg.clientHeight;
+    const pct = { ...getActivePct(f) };
+    drag = {
+      type: handle ? handle.className.replace('handle ', '') : 'move',
+      startX: e.clientX,
+      startY: e.clientY,
+      startPct: pct,
+      displayW, displayH,
+    };
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const dxPct = (e.clientX - drag.startX) / drag.displayW;
+    const dyPct = (e.clientY - drag.startY) / drag.displayH;
+    let { x, y, w, h } = drag.startPct;
+    const minSize = 0.02;
+
+    const type = drag.type;
+    if (type === 'move') {
+      x = clamp(x + dxPct, 0, 1 - w);
+      y = clamp(y + dyPct, 0, 1 - h);
+    } else {
+      // resize
+      let nx = x, ny = y, nw = w, nh = h;
+      if (type.includes('w')) { nx = x + dxPct; nw = w - dxPct; }
+      if (type.includes('e')) { nw = w + dxPct; }
+      if (type.includes('n')) { ny = y + dyPct; nh = h - dyPct; }
+      if (type.includes('s')) { nh = h + dyPct; }
+
+      // 约束
+      if (nx < 0) { nw += nx; nx = 0; }
+      if (ny < 0) { nh += ny; ny = 0; }
+      if (nx + nw > 1) nw = 1 - nx;
+      if (ny + nh > 1) nh = 1 - ny;
+      if (nw < minSize || nh < minSize) return;
+
+      // 比例模式：保持当前这张图的比例
+      const curF = getCurrentFile();
+      if (curF && curF.mode === 'ratio' && curF.ratio) {
+        const iw = curF.img.naturalWidth, ih = curF.img.naturalHeight;
+        const cr = (nw * iw) / (nh * ih);
+        if (type === 'nw' || type === 'ne' || type === 'sw' || type === 'se') {
+          if (cr > curF.ratio) {
+            const newW = nh * ih * curF.ratio / iw;
+            if (type.includes('w')) nx += (nw - newW);
+            nw = newW;
+          } else {
+            const newH = nw * iw / curF.ratio / ih;
+            if (type.includes('n')) ny += (nh - newH);
+            nh = newH;
+          }
+        } else if (type === 'n' || type === 's') {
+          const newW = nh * ih * curF.ratio / iw;
+          nx = nx + (nw - newW) / 2;
+          nw = newW;
+        } else if (type === 'w' || type === 'e') {
+          const newH = nw * iw / curF.ratio / ih;
+          ny = ny + (nh - newH) / 2;
+          nh = newH;
+        }
+        if (nx < 0 || ny < 0 || nx + nw > 1 || ny + nh > 1) return;
+      }
+
+      // 像素模式：固定宽高比 = 这张图的 pixelW/pixelH
+      if (curF && curF.mode === 'pixel') {
+        const iw = curF.img.naturalWidth, ih = curF.img.naturalHeight;
+        const targetRatio = curF.pixelW / curF.pixelH;
+        const cr = (nw * iw) / (nh * ih);
+        if (type === 'nw' || type === 'ne' || type === 'sw' || type === 'se') {
+          if (cr > targetRatio) {
+            const newW = nh * ih * targetRatio / iw;
+            if (type.includes('w')) nx += (nw - newW);
+            nw = newW;
+          } else {
+            const newH = nw * iw / targetRatio / ih;
+            if (type.includes('n')) ny += (nh - newH);
+            nh = newH;
+          }
+        }
+        if (nx < 0 || ny < 0 || nx + nw > 1 || ny + nh > 1) return;
+      }
+
+      x = nx; y = ny; w = nw; h = nh;
+    }
+
+    const f = getCurrentFile();
+    if (f) f.cropPct = { x, y, w, h };
+    positionCropBox();
+  });
+
+  window.addEventListener('mouseup', () => { drag = null; });
+
+  window.addEventListener('resize', () => applyZoom());
+  previewImg.addEventListener('load', () => applyZoom());
+
+  // ---------- 缩放控制 ----------
+  $('zoomIn').addEventListener('click', () => setZoom(state.zoom * 1.25));
+  $('zoomOut').addEventListener('click', () => setZoom(state.zoom / 1.25));
+  $('zoomFit').addEventListener('click', () => { state.zoom = 1; applyZoom(); });
+  $('zoom100').addEventListener('click', () => {
+    // 让 canvas 显示原图实际像素 → scale = 1 → zoom = 1/fitScale
+    state.zoom = 1 / state.fitScale;
+    applyZoom();
+  });
+  $('zoomVal').addEventListener('click', () => { state.zoom = 1; applyZoom(); });
+
+  // 鼠标滚轮缩放（在画布区域内）
+  canvasArea.addEventListener('wheel', e => {
+    // 按住 Ctrl/⌘ 或 双指捏合 → 缩放；否则正常滚动
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 1/1.12 : 1.12;
+      setZoom(state.zoom * delta, { clientX: e.clientX, clientY: e.clientY });
+    }
+  }, { passive: false });
+
+  // 快捷键
+  window.addEventListener('keydown', e => {
+    if (e.target.matches('input, textarea, select')) return;
+    if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+      e.preventDefault(); setZoom(state.zoom * 1.25);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+      e.preventDefault(); setZoom(state.zoom / 1.25);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+      e.preventDefault(); state.zoom = 1; applyZoom();
+    } else if (e.key === 'f' || e.key === 'F') {
+      state.zoom = 1; applyZoom();
+    }
+  });
+
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  // ---------- 状态栏 ----------
+  function updateStatus() {
+    const n = state.files.length;
+    statusEl.textContent = n ? `共 ${n} 张图片` : '未导入图片';
+    $('downloadOneBtn').disabled = !n;
+    $('downloadAllBtn').disabled = !n;
+    updateNamePreview();
+  }
+
+  // ---------- 生成裁剪后的 Blob ----------
+  async function cropOne(f) {
+    const pct = getActivePct(f);
+    const iw = f.img.naturalWidth, ih = f.img.naturalHeight;
+    let sx = Math.round(pct.x * iw);
+    let sy = Math.round(pct.y * ih);
+    let sw = Math.round(pct.w * iw);
+    let sh = Math.round(pct.h * ih);
+    sx = clamp(sx, 0, iw - 1);
+    sy = clamp(sy, 0, ih - 1);
+    sw = clamp(sw, 1, iw - sx);
+    sh = clamp(sh, 1, ih - sy);
+
+    let outW = sw, outH = sh;
+    if (f.mode === 'pixel') {
+      outW = f.pixelW;
+      outH = f.pixelH;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // JPG 背景填白
+    if (state.format === 'image/jpeg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, outW, outH);
+    }
+    ctx.drawImage(f.img, sx, sy, sw, sh, 0, 0, outW, outH);
+
+    return await new Promise(res => canvas.toBlob(res, state.format, state.quality));
+  }
+
+  // ---------- 下载 ----------
+  $('downloadOneBtn').addEventListener('click', async () => {
+    const f = getCurrentFile();
+    if (!f) return;
+    const names = computeAllNames();
+    const idx = state.files.findIndex(x => x.id === f.id);
+    const blob = await cropOne(f);
+    triggerDownload(blob, names[idx]);
+  });
+
+  $('downloadAllBtn').addEventListener('click', async () => {
+    if (!state.files.length) return;
+    const zip = new JSZip();
+    const progress = $('progress');
+    const progressBar = $('progressBar');
+    progress.classList.add('active');
+    progressBar.style.width = '0%';
+
+    const names = computeAllNames();
+    for (let i = 0; i < state.files.length; i++) {
+      const f = state.files[i];
+      const blob = await cropOne(f);
+      zip.file(names[i], blob);
+      progressBar.style.width = ((i + 1) / state.files.length * 100) + '%';
+      statusEl.textContent = `处理中 ${i+1}/${state.files.length}`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    triggerDownload(zipBlob, `cropped_${Date.now()}.zip`);
+    setTimeout(() => {
+      progress.classList.remove('active');
+      updateStatus();
+    }, 800);
+  });
+
+  function triggerDownload(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+})();
+</script>
+</body>
+</html>
