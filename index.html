@@ -240,17 +240,48 @@
   }
   .tool-bar .mini-btn:hover { background: #1b1f2a; color: #c5d4ff; }
   .tool-bar .mini-btn.danger:hover { background: #2b1f23; color: #ff7676; }
+  .tool-bar .done-btn {
+    background: #2f7a49;
+    color: #e8ffee;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    display: none;
+  }
+  .tool-bar .done-btn:hover { background: #3a9259; }
+  .app.mosaic-mode .tool-bar .done-btn { display: inline-block; }
+  /* 马赛克模式下把 ✂ 裁剪 按钮突出成"返回"的样子 */
+  .app.mosaic-mode #toolCrop {
+    background: #1b1f2a;
+    color: #c5d4ff;
+    outline: 1px dashed #5b8cff;
+  }
 
   /* 马赛克画笔光标 */
   .brush-cursor {
-    position: absolute;
-    border: 1.5px solid #5b8cff;
+    position: fixed;
+    border: 2px solid #fff;
+    outline: 1px solid #000;
     border-radius: 50%;
-    background: rgba(91, 140, 255, 0.1);
+    background: rgba(91, 140, 255, 0.15);
     pointer-events: none;
     transform: translate(-50%, -50%);
-    z-index: 9;
+    z-index: 9999;
     display: none;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 0 8px rgba(91,140,255,0.4);
+  }
+  .brush-cursor::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 4px; height: 4px;
+    background: #fff;
+    border: 1px solid #000;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
   }
   /* 马赛克 overlay 画布 */
   #mosaicOverlay {
@@ -546,6 +577,8 @@
       <div class="sep"></div>
       <button class="mini-btn" id="mosaicSyncBtn" title="把当前图的马赛克应用到所有图（按相对位置）">⎘ 同步</button>
       <button class="mini-btn danger" id="mosaicClearBtn" title="清除当前图的全部马赛克">🗑 清除</button>
+      <div class="sep"></div>
+      <button class="done-btn" id="mosaicDoneBtn" title="完成涂抹，返回裁剪模式 (Esc)">✓ 完成涂抹</button>
     </div>
     <div class="brush-cursor" id="brushCursor"></div>
     <div class="zoom-controls" id="zoomControls" style="display:none">
@@ -1446,6 +1479,8 @@
       setTool('crop');
     } else if (e.key === 'b' || e.key === 'B') {
       setTool('mosaic');
+    } else if (e.key === 'Escape' && state.tool === 'mosaic') {
+      setTool('crop');
     }
   });
 
@@ -1461,6 +1496,10 @@
   }
   $('toolCrop').addEventListener('click', () => setTool('crop'));
   $('toolMosaic').addEventListener('click', () => setTool('mosaic'));
+  $('mosaicDoneBtn').addEventListener('click', () => {
+    setTool('crop');
+    flashStatus('已退出涂抹，可以继续调整裁剪框');
+  });
 
   $('brushSize').addEventListener('input', e => {
     state.brushSize = +e.target.value;
