@@ -172,6 +172,97 @@
     user-select: none;
     -webkit-user-drag: none;
   }
+  /* 工具栏（画布顶部浮动） */
+  .tool-bar {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(22,25,34,0.92);
+    backdrop-filter: blur(8px);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid #262a36;
+    z-index: 11;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    font-size: 12px;
+  }
+  .tool-bar .tool-btn {
+    background: transparent;
+    border: none;
+    color: #8b92a6;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .tool-bar .tool-btn.active {
+    background: #2a3450;
+    color: #c5d4ff;
+  }
+  .tool-bar .tool-btn:hover:not(.active) { background: #1b1f2a; color: #c5d4ff; }
+  .tool-bar .sep {
+    width: 1px;
+    height: 18px;
+    background: #2a3450;
+    margin: 0 4px;
+  }
+  .tool-bar label {
+    color: #8b92a6;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+  }
+  .tool-bar input[type="range"] {
+    width: 80px;
+  }
+  .tool-bar .val {
+    color: #c5d4ff;
+    font-size: 11px;
+    min-width: 28px;
+    text-align: right;
+  }
+  .tool-bar .mini-btn {
+    background: transparent;
+    border: none;
+    color: #8b92a6;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .tool-bar .mini-btn:hover { background: #1b1f2a; color: #c5d4ff; }
+  .tool-bar .mini-btn.danger:hover { background: #2b1f23; color: #ff7676; }
+
+  /* 马赛克画笔光标 */
+  .brush-cursor {
+    position: absolute;
+    border: 1.5px solid #5b8cff;
+    border-radius: 50%;
+    background: rgba(91, 140, 255, 0.1);
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    z-index: 9;
+    display: none;
+  }
+  /* 马赛克 overlay 画布 */
+  #mosaicOverlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .app.mosaic-mode .crop-box { pointer-events: none; opacity: 0.55; }
+  .app.mosaic-mode .handle    { pointer-events: none; }
+  .app.mosaic-mode #mosaicOverlay { pointer-events: auto; cursor: none; }
+
   .zoom-controls {
     position: fixed;
     bottom: 72px;
@@ -417,8 +508,8 @@
   <aside class="sidebar">
     <div class="drop-zone" id="dropZone">
       <div>📁 点击或拖拽图片到此</div>
-      <div style="margin-top:4px; font-size:11px; opacity:0.7;">支持 JPG / PNG / WebP，可多选</div>
-      <input type="file" id="fileInput" multiple accept="image/*" style="display:none" />
+      <div style="margin-top:4px; font-size:11px; opacity:0.7;">JPG / PNG / WebP / CR2 / NEF / ARW / DNG 等</div>
+      <input type="file" id="fileInput" multiple accept="image/*,.cr2,.nef,.arw,.dng,.raf,.rw2,.orf,.pef,.srw,.crw" style="display:none" />
     </div>
     <div class="file-list" id="fileList"></div>
   </aside>
@@ -431,6 +522,7 @@
       </div>
       <div class="canvas-wrapper" id="canvasWrapper" style="display:none">
         <img id="previewImg" />
+        <canvas id="mosaicOverlay"></canvas>
         <div class="crop-overlay">
           <div class="crop-mask" id="maskTop"></div>
           <div class="crop-mask" id="maskBottom"></div>
@@ -445,6 +537,17 @@
         </div>
       </div>
     </div>
+    <div class="tool-bar" id="toolBar" style="display:none">
+      <button class="tool-btn active" id="toolCrop" title="裁剪 (V)">✂ 裁剪</button>
+      <button class="tool-btn" id="toolMosaic" title="马赛克涂抹 (B)">🖌 马赛克</button>
+      <div class="sep"></div>
+      <label>画笔 <input type="range" id="brushSize" min="8" max="200" value="40" /><span class="val" id="brushSizeVal">40</span></label>
+      <label>粒度 <input type="range" id="mosaicGrain" min="4" max="60" value="14" /><span class="val" id="mosaicGrainVal">14</span></label>
+      <div class="sep"></div>
+      <button class="mini-btn" id="mosaicSyncBtn" title="把当前图的马赛克应用到所有图（按相对位置）">⎘ 同步</button>
+      <button class="mini-btn danger" id="mosaicClearBtn" title="清除当前图的全部马赛克">🗑 清除</button>
+    </div>
+    <div class="brush-cursor" id="brushCursor"></div>
     <div class="zoom-controls" id="zoomControls" style="display:none">
       <button id="zoomOut" title="缩小 (Ctrl/⌘ -)">−</button>
       <span class="zoom-val" id="zoomVal" title="点击重置">100%</span>
@@ -585,6 +688,10 @@
     template: 'pic',
     zoom: 1,
     fitScale: 1,
+    // 工具与画笔
+    tool: 'crop',         // 'crop' | 'mosaic'
+    brushSize: 40,        // 屏幕像素
+    mosaicGrain: 14,      // 屏幕像素下的马赛克方块边长
   };
 
   // 读写当前图片的快捷器
@@ -604,6 +711,10 @@
   const cropBox = $('cropBox');
   const statusEl = $('status');
   const zoomControls = $('zoomControls');
+  const toolBar = $('toolBar');
+  const mosaicOverlay = $('mosaicOverlay');
+  const brushCursor = $('brushCursor');
+  const appRoot = document.querySelector('.app');
 
   // ---------- 文件导入 ----------
   dropZone.addEventListener('click', () => fileInput.click());
@@ -627,22 +738,61 @@
     handleFiles(e.dataTransfer.files);
   });
 
+  const RAW_EXT_RE = /\.(cr2|cr3|nef|arw|dng|raf|rw2|orf|pef|srw|crw)$/i;
+
   async function handleFiles(fileList) {
-    const imgs = [...fileList].filter(f => f.type.startsWith('image/'));
-    for (const file of imgs) {
+    const items = [...fileList].filter(f =>
+      f.type.startsWith('image/') || RAW_EXT_RE.test(f.name)
+    );
+    if (!items.length) return;
+
+    for (const file of items) {
+      const isRaw = RAW_EXT_RE.test(file.name);
+      let srcBlob = file;
+
+      if (isRaw) {
+        flashStatus(`解析 ${file.name} 中…`);
+        try {
+          const buf = await file.arrayBuffer();
+          const jpegBuf = extractEmbeddedJpeg(buf);
+          if (!jpegBuf) {
+            alert(`${file.name}：未找到可用的内嵌预览图`);
+            continue;
+          }
+          srcBlob = new Blob([jpegBuf], { type: 'image/jpeg' });
+        } catch (err) {
+          console.error(err);
+          alert(`${file.name} 读取失败: ${err.message}`);
+          continue;
+        }
+      }
+
       const id = crypto.randomUUID();
-      const url = URL.createObjectURL(file);
-      const img = await loadImage(url);
+      const url = URL.createObjectURL(srcBlob);
+      let img;
+      try {
+        img = await loadImage(url);
+      } catch {
+        alert(`${file.name} 无法加载为图像`);
+        URL.revokeObjectURL(url);
+        continue;
+      }
+
       state.files.push({
-        id, file, name: file.name, url, img,
+        id,
+        file,
+        name: file.name,
+        url,
+        img,
+        isRaw,
         cropPct: null,
         suffix: String(state.files.length + 1).padStart(2, '0'),
-        // 每张图独立的剪裁配置，初始 = 最近一次使用的默认值
         mode:       state.defaults.mode,
         ratio:      state.defaults.ratio,
         ratioLabel: state.defaults.ratioLabel,
         pixelW:     state.defaults.pixelW,
         pixelH:     state.defaults.pixelH,
+        mosaicCanvas: null,   // 懒创建；大小 = 原图自然尺寸
       });
     }
     if (!state.currentId && state.files.length) {
@@ -653,6 +803,39 @@
     syncUIFromCurrent();
     renderPreview();
     updateStatus();
+  }
+
+  // 从 RAW (TIFF 容器) 中扫描并提取最大的内嵌 JPEG 段
+  // 约定：JPEG 以 0xFFD8FF 开始，以 0xFFD9 结束
+  function extractEmbeddedJpeg(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    const len = bytes.length;
+    let bestStart = -1, bestEnd = -1, bestSize = 0;
+    let i = 0;
+    while (i < len - 3) {
+      if (bytes[i] === 0xFF && bytes[i+1] === 0xD8 && bytes[i+2] === 0xFF) {
+        // 从此处开始找 EOI
+        let j = i + 3;
+        while (j < len - 1) {
+          if (bytes[j] === 0xFF && bytes[j+1] === 0xD9) {
+            const size = j + 2 - i;
+            if (size > bestSize) {
+              bestSize = size;
+              bestStart = i;
+              bestEnd = j + 2;
+            }
+            i = j + 2;
+            break;
+          }
+          j++;
+        }
+        if (j >= len - 1) break;
+      } else {
+        i++;
+      }
+    }
+    if (bestStart < 0 || bestSize < 1024) return null;
+    return arrayBuffer.slice(bestStart, bestEnd);
   }
 
   function loadImage(url) {
@@ -1009,11 +1192,13 @@
       emptyState.style.display = '';
       canvasWrapper.style.display = 'none';
       zoomControls.style.display = 'none';
+      toolBar.style.display = 'none';
       return;
     }
     emptyState.style.display = 'none';
     canvasWrapper.style.display = '';
     zoomControls.style.display = '';
+    toolBar.style.display = '';
     if (previewImg.src !== f.url) previewImg.src = f.url;
 
     if (!f.cropPct) initCropForCurrent();
@@ -1040,11 +1225,28 @@
     const ih = f.img.naturalHeight;
     state.fitScale = computeFitScale(iw, ih);
     const scale = state.fitScale * state.zoom;
-    canvasWrapper.style.width = Math.round(iw * scale) + 'px';
-    canvasWrapper.style.height = Math.round(ih * scale) + 'px';
-    // 更新显示值：以 100% 表示原图实际像素
+    const W = Math.round(iw * scale);
+    const H = Math.round(ih * scale);
+    canvasWrapper.style.width = W + 'px';
+    canvasWrapper.style.height = H + 'px';
+    // 调整马赛克 overlay 分辨率
+    if (mosaicOverlay.width !== W || mosaicOverlay.height !== H) {
+      mosaicOverlay.width = W;
+      mosaicOverlay.height = H;
+    }
+    renderMosaicOverlay();
     $('zoomVal').textContent = Math.round(scale * 100) + '%';
     positionCropBox();
+  }
+
+  // 把当前图的 mosaicCanvas（原图尺寸）缩放绘制到 overlay（显示尺寸）
+  function renderMosaicOverlay() {
+    const ctx = mosaicOverlay.getContext('2d');
+    ctx.clearRect(0, 0, mosaicOverlay.width, mosaicOverlay.height);
+    const f = getCurrentFile();
+    if (!f || !f.mosaicCanvas) return;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(f.mosaicCanvas, 0, 0, mosaicOverlay.width, mosaicOverlay.height);
   }
 
   function setZoom(newZoom, pivot) {
@@ -1240,10 +1442,191 @@
       e.preventDefault(); state.zoom = 1; applyZoom();
     } else if (e.key === 'f' || e.key === 'F') {
       state.zoom = 1; applyZoom();
+    } else if (e.key === 'v' || e.key === 'V') {
+      setTool('crop');
+    } else if (e.key === 'b' || e.key === 'B') {
+      setTool('mosaic');
     }
   });
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  // ---------- 工具切换 ----------
+  function setTool(t) {
+    state.tool = t;
+    $('toolCrop').classList.toggle('active', t === 'crop');
+    $('toolMosaic').classList.toggle('active', t === 'mosaic');
+    appRoot.classList.toggle('mosaic-mode', t === 'mosaic');
+    brushCursor.style.display = 'none';
+  }
+  $('toolCrop').addEventListener('click', () => setTool('crop'));
+  $('toolMosaic').addEventListener('click', () => setTool('mosaic'));
+
+  $('brushSize').addEventListener('input', e => {
+    state.brushSize = +e.target.value;
+    $('brushSizeVal').textContent = state.brushSize;
+    updateBrushCursorSize();
+  });
+  $('mosaicGrain').addEventListener('input', e => {
+    state.mosaicGrain = +e.target.value;
+    $('mosaicGrainVal').textContent = state.mosaicGrain;
+  });
+
+  function updateBrushCursorSize() {
+    const d = state.brushSize;
+    brushCursor.style.width = d + 'px';
+    brushCursor.style.height = d + 'px';
+  }
+  updateBrushCursorSize();
+
+  // ---------- 马赛克涂抹 ----------
+  // 确保当前图有 mosaicCanvas
+  function ensureMosaicCanvas(f) {
+    if (f.mosaicCanvas) return f.mosaicCanvas;
+    const c = document.createElement('canvas');
+    c.width = f.img.naturalWidth;
+    c.height = f.img.naturalHeight;
+    f.mosaicCanvas = c;
+    return c;
+  }
+
+  // 在图像坐标 (ix, iy) 处画一个圆形马赛克斑块
+  function paintMosaicAt(f, ix, iy, brushRadiusImg, grainImg) {
+    const mosaic = ensureMosaicCanvas(f);
+    const mctx = mosaic.getContext('2d');
+
+    const iw = f.img.naturalWidth, ih = f.img.naturalHeight;
+    const r = Math.max(2, brushRadiusImg);
+    const g = Math.max(2, grainImg);
+
+    const x0 = Math.max(0, Math.floor(ix - r));
+    const y0 = Math.max(0, Math.floor(iy - r));
+    const x1 = Math.min(iw, Math.ceil(ix + r));
+    const y1 = Math.min(ih, Math.ceil(iy + r));
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+
+    // 对这块区域做像素化：原图 → 缩小 → 放大
+    const sw = Math.max(1, Math.floor(w / g));
+    const sh = Math.max(1, Math.floor(h / g));
+    const tiny = document.createElement('canvas');
+    tiny.width = sw; tiny.height = sh;
+    const tctx = tiny.getContext('2d');
+    tctx.imageSmoothingEnabled = false;
+    tctx.drawImage(f.img, x0, y0, w, h, 0, 0, sw, sh);
+
+    // 在 mosaic canvas 上，先做圆形 clip，再放大绘制
+    mctx.save();
+    mctx.beginPath();
+    mctx.arc(ix, iy, r, 0, Math.PI * 2);
+    mctx.clip();
+    mctx.imageSmoothingEnabled = false;
+    mctx.drawImage(tiny, 0, 0, sw, sh, x0, y0, w, h);
+    mctx.restore();
+  }
+
+  // overlay 坐标 → 图像自然坐标
+  function overlayToImage(ox, oy) {
+    const f = getCurrentFile();
+    if (!f) return null;
+    const scaleX = f.img.naturalWidth  / mosaicOverlay.width;
+    const scaleY = f.img.naturalHeight / mosaicOverlay.height;
+    return { x: ox * scaleX, y: oy * scaleY };
+  }
+
+  let painting = false;
+  let lastPaintPt = null;
+
+  mosaicOverlay.addEventListener('mousedown', e => {
+    if (state.tool !== 'mosaic') return;
+    const f = getCurrentFile();
+    if (!f) return;
+    painting = true;
+    const rect = mosaicOverlay.getBoundingClientRect();
+    lastPaintPt = overlayToImage(e.clientX - rect.left, e.clientY - rect.top);
+    const brushRadiusImg = (state.brushSize / 2) * (f.img.naturalWidth / mosaicOverlay.width);
+    const grainImg       = state.mosaicGrain  * (f.img.naturalWidth / mosaicOverlay.width);
+    paintMosaicAt(f, lastPaintPt.x, lastPaintPt.y, brushRadiusImg, grainImg);
+    renderMosaicOverlay();
+    e.preventDefault();
+  });
+
+  mosaicOverlay.addEventListener('mousemove', e => {
+    const rect = mosaicOverlay.getBoundingClientRect();
+    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
+
+    // 画笔光标跟随
+    if (state.tool === 'mosaic') {
+      brushCursor.style.display = '';
+      brushCursor.style.left = e.clientX + 'px';
+      brushCursor.style.top  = e.clientY + 'px';
+    }
+
+    if (!painting || state.tool !== 'mosaic') return;
+    const f = getCurrentFile();
+    if (!f) return;
+
+    const pt = overlayToImage(ox, oy);
+    const brushRadiusImg = (state.brushSize / 2) * (f.img.naturalWidth / mosaicOverlay.width);
+    const grainImg       = state.mosaicGrain  * (f.img.naturalWidth / mosaicOverlay.width);
+
+    // 沿上一点到当前点插值，避免画断
+    if (lastPaintPt) {
+      const dx = pt.x - lastPaintPt.x, dy = pt.y - lastPaintPt.y;
+      const dist = Math.hypot(dx, dy);
+      const step = Math.max(brushRadiusImg * 0.35, 1);
+      const n = Math.max(1, Math.ceil(dist / step));
+      for (let k = 1; k <= n; k++) {
+        const ix = lastPaintPt.x + dx * k / n;
+        const iy = lastPaintPt.y + dy * k / n;
+        paintMosaicAt(f, ix, iy, brushRadiusImg, grainImg);
+      }
+    } else {
+      paintMosaicAt(f, pt.x, pt.y, brushRadiusImg, grainImg);
+    }
+    lastPaintPt = pt;
+    renderMosaicOverlay();
+  });
+
+  mosaicOverlay.addEventListener('mouseleave', () => {
+    brushCursor.style.display = 'none';
+  });
+  window.addEventListener('mouseup', () => {
+    painting = false;
+    lastPaintPt = null;
+  });
+
+  // 清除当前图马赛克
+  $('mosaicClearBtn').addEventListener('click', () => {
+    const f = getCurrentFile();
+    if (!f) return;
+    f.mosaicCanvas = null;
+    renderMosaicOverlay();
+    flashStatus('已清除当前图的马赛克');
+  });
+
+  // 同步当前图的马赛克到所有图（按相对位置）
+  $('mosaicSyncBtn').addEventListener('click', () => {
+    const cur = getCurrentFile();
+    if (!cur || !cur.mosaicCanvas) {
+      flashStatus('当前图没有马赛克');
+      return;
+    }
+    if (state.files.length < 2) return;
+    state.files.forEach(f => {
+      if (f.id === cur.id) return;
+      const dst = document.createElement('canvas');
+      dst.width = f.img.naturalWidth;
+      dst.height = f.img.naturalHeight;
+      dst.getContext('2d').drawImage(
+        cur.mosaicCanvas,
+        0, 0, cur.mosaicCanvas.width, cur.mosaicCanvas.height,
+        0, 0, dst.width, dst.height
+      );
+      f.mosaicCanvas = dst;
+    });
+    flashStatus(`马赛克已同步到 ${state.files.length} 张图`);
+  });
 
   // ---------- 状态栏 ----------
   function updateStatus() {
@@ -1286,6 +1669,13 @@
       ctx.fillRect(0, 0, outW, outH);
     }
     ctx.drawImage(f.img, sx, sy, sw, sh, 0, 0, outW, outH);
+
+    // 合成马赛克涂抹层
+    if (f.mosaicCanvas) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(f.mosaicCanvas, sx, sy, sw, sh, 0, 0, outW, outH);
+      ctx.imageSmoothingEnabled = true;
+    }
 
     return await new Promise(res => canvas.toBlob(res, state.format, state.quality));
   }
