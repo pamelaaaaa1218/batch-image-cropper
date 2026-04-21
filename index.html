@@ -1492,7 +1492,8 @@
     $('toolCrop').classList.toggle('active', t === 'crop');
     $('toolMosaic').classList.toggle('active', t === 'mosaic');
     appRoot.classList.toggle('mosaic-mode', t === 'mosaic');
-    brushCursor.style.display = 'none';
+    if (t !== 'mosaic') brushCursor.style.display = 'none';
+    if (t === 'mosaic') flashStatus('马赛克模式：按住左键涂抹，Esc 或点「✓ 完成涂抹」返回');
   }
   $('toolCrop').addEventListener('click', () => setTool('crop'));
   $('toolMosaic').addEventListener('click', () => setTool('mosaic'));
@@ -1590,20 +1591,29 @@
     e.preventDefault();
   });
 
-  mosaicOverlay.addEventListener('mousemove', e => {
+  // 画笔光标：全局 mousemove，保证任何层级都能跟随显示
+  window.addEventListener('mousemove', e => {
+    if (state.tool !== 'mosaic') return;
+    // 只在鼠标悬停于 mosaicOverlay 的矩形范围内才显示
     const rect = mosaicOverlay.getBoundingClientRect();
-    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
-
-    // 画笔光标跟随
-    if (state.tool === 'mosaic') {
-      brushCursor.style.display = '';
+    const inside = e.clientX >= rect.left && e.clientX <= rect.right
+                && e.clientY >= rect.top  && e.clientY <= rect.bottom
+                && rect.width > 0 && rect.height > 0;
+    if (inside) {
+      brushCursor.style.display = 'block';
       brushCursor.style.left = e.clientX + 'px';
       brushCursor.style.top  = e.clientY + 'px';
+    } else {
+      brushCursor.style.display = 'none';
     }
+  }, true);
 
+  mosaicOverlay.addEventListener('mousemove', e => {
     if (!painting || state.tool !== 'mosaic') return;
     const f = getCurrentFile();
     if (!f) return;
+    const rect = mosaicOverlay.getBoundingClientRect();
+    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
 
     const pt = overlayToImage(ox, oy);
     const brushRadiusImg = (state.brushSize / 2) * (f.img.naturalWidth / mosaicOverlay.width);
@@ -1625,10 +1635,6 @@
     }
     lastPaintPt = pt;
     renderMosaicOverlay();
-  });
-
-  mosaicOverlay.addEventListener('mouseleave', () => {
-    brushCursor.style.display = 'none';
   });
   window.addEventListener('mouseup', () => {
     painting = false;
