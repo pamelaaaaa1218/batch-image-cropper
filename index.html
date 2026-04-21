@@ -787,9 +787,9 @@
         flashStatus(`解析 ${file.name} 中…`);
         try {
           const buf = await file.arrayBuffer();
-          const jpegBuf = extractEmbeddedJpeg(buf);
+          const jpegBuf = await extractDecodablePreview(buf);
           if (!jpegBuf) {
-            alert(`${file.name}：未找到可用的内嵌预览图`);
+            alert(`${file.name}：未找到可被浏览器解码的内嵌预览图（此 RAW 文件可能只含 Lossless JPEG 的原始数据，建议用相机厂商工具先导出 JPEG）`);
             continue;
           }
           srcBlob = new Blob([jpegBuf], { type: 'image/jpeg' });
@@ -838,37 +838,130 @@
     updateStatus();
   }
 
-  // 从 RAW (TIFF 容器) 中扫描并提取最大的内嵌 JPEG 段
-  // 约定：JPEG 以 0xFFD8FF 开始，以 0xFFD9 结束
-  function extractEmbeddedJpeg(arrayBuffer) {
+  // ========== RAW 预览提取 ==========
+  // CR2/NEF/ARW 等都是 TIFF 容器；内含多个 IFD，其中至少一个是真正的 JPEG 预览，
+  // 另外还可能包含 Lossless JPEG 的 RAW 数据（浏览器无法解码）。
+  // 策略：先按 TIFF IFD 结构尝试拿"大预览图"的偏移；拿不到就退化为全局扫描 FFD8...FFD9，
+  // 按大小降序依次尝试用 <img> 解码，取第一张能成功解码的。
+
+  // 收集所有 FFD8 FF ... FF D9 段
+  function collectJpegSegments(arrayBuffer) {
     const bytes = new Uint8Array(arrayBuffer);
     const len = bytes.length;
-    let bestStart = -1, bestEnd = -1, bestSize = 0;
+    const segs = [];
     let i = 0;
     while (i < len - 3) {
       if (bytes[i] === 0xFF && bytes[i+1] === 0xD8 && bytes[i+2] === 0xFF) {
-        // 从此处开始找 EOI
         let j = i + 3;
+        let found = false;
         while (j < len - 1) {
           if (bytes[j] === 0xFF && bytes[j+1] === 0xD9) {
-            const size = j + 2 - i;
-            if (size > bestSize) {
-              bestSize = size;
-              bestStart = i;
-              bestEnd = j + 2;
-            }
+            segs.push({ start: i, end: j + 2, size: j + 2 - i });
             i = j + 2;
+            found = true;
             break;
           }
           j++;
         }
-        if (j >= len - 1) break;
+        if (!found) break;
       } else {
         i++;
       }
     }
-    if (bestStart < 0 || bestSize < 1024) return null;
-    return arrayBuffer.slice(bestStart, bestEnd);
+    return segs;
+  }
+
+  // 解析 TIFF 里的 IFD #0，返回可能的"预览 JPEG"偏移与长度（如果 compression 标记为 6/JPEG）
+  function readTiffPreviewOffsets(arrayBuffer) {
+    try {
+      const view = new DataView(arrayBuffer);
+      if (arrayBuffer.byteLength < 16) return [];
+      const bo = view.getUint16(0);
+      const le = bo === 0x4949;
+      if (bo !== 0x4949 && bo !== 0x4D4D) return [];
+      const magic = view.getUint16(2, le);
+      if (magic !== 42) return [];
+      const results = [];
+      let ifdOffset = view.getUint32(4, le);
+      let safety = 0;
+      while (ifdOffset && ifdOffset + 2 < arrayBuffer.byteLength && safety++ < 16) {
+        const count = view.getUint16(ifdOffset, le);
+        const entries = {};
+        for (let k = 0; k < count; k++) {
+          const off = ifdOffset + 2 + k * 12;
+          if (off + 12 > arrayBuffer.byteLength) break;
+          const tag  = view.getUint16(off, le);
+          const type = view.getUint16(off + 2, le);
+          const cnt  = view.getUint32(off + 4, le);
+          const valOff = off + 8;
+          // 读 LONG/SHORT 第一个值
+          const getVal = () => type === 3
+            ? view.getUint16(valOff, le)
+            : view.getUint32(valOff, le);
+          entries[tag] = { type, cnt, valOff, first: getVal() };
+        }
+        // 常见：JPEGInterchangeFormat(0x0201) + JPEGInterchangeFormatLength(0x0202)
+        const jif  = entries[0x0201];
+        const jifL = entries[0x0202];
+        if (jif && jifL && jifL.first > 1024) {
+          results.push({ start: jif.first, end: jif.first + jifL.first, size: jifL.first });
+        }
+        // StripOffsets(0x0111) + StripByteCounts(0x0117)，IFD #0 的 Compression=6 表示 JPEG
+        const comp = entries[0x0103];
+        const so   = entries[0x0111];
+        const sbc  = entries[0x0117];
+        if (comp && comp.first === 6 && so && sbc && sbc.first > 1024) {
+          results.push({ start: so.first, end: so.first + sbc.first, size: sbc.first });
+        }
+        // 跳到下一个 IFD
+        const nextOff = ifdOffset + 2 + count * 12;
+        if (nextOff + 4 > arrayBuffer.byteLength) break;
+        ifdOffset = view.getUint32(nextOff, le);
+      }
+      return results.filter(r => r.end <= arrayBuffer.byteLength);
+    } catch (e) {
+      console.warn('TIFF 解析失败', e);
+      return [];
+    }
+  }
+
+  function testJpegDecodable(buf) {
+    return new Promise(resolve => {
+      const blob = new Blob([buf], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      const done = ok => { URL.revokeObjectURL(url); resolve(ok); };
+      img.onload  = () => done(img.naturalWidth > 0 && img.naturalHeight > 0);
+      img.onerror = () => done(false);
+      img.src = url;
+    });
+  }
+
+  async function extractDecodablePreview(arrayBuffer) {
+    // 1) 优先走 TIFF IFD 标注的偏移
+    const ifdHits = readTiffPreviewOffsets(arrayBuffer);
+    // 2) 全局扫描所有 FFD8..FFD9 段兜底
+    const scanHits = collectJpegSegments(arrayBuffer);
+    // 合并去重（按 start），按 size 降序
+    const seen = new Set();
+    const all = [];
+    for (const s of [...ifdHits, ...scanHits]) {
+      if (seen.has(s.start)) continue;
+      seen.add(s.start);
+      all.push(s);
+    }
+    all.sort((a, b) => b.size - a.size);
+
+    for (const s of all) {
+      if (s.size < 1024) continue;
+      const buf = arrayBuffer.slice(s.start, s.end);
+      const bytes = new Uint8Array(buf);
+      // 快检：必须以 FFD8FF 开头
+      if (bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8 || bytes[2] !== 0xFF) continue;
+      const ok = await testJpegDecodable(buf);
+      if (ok) return buf;
+    }
+    return null;
   }
 
   function loadImage(url) {
